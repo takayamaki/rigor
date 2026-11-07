@@ -477,6 +477,20 @@ RSpec.describe "plugins/rigor-actionpack" do
       end
     end
 
+    describe "`expect` / `require` on `params`, which can answer a scalar (#2947)" do
+      context "with an actionpack collection loaded" do
+        it "stays silent on `params.expect(:sort).to_sym`"
+        it "stays silent on `params.require(:id).to_sym`"
+        it "stays silent on `params.expect(:time).match?(/x/)`"
+        it "still reports `call.undefined-method` on `params.permit(:name).no_such_method`"
+        it "keeps the `require(...).permit` and `expect(...)` chains resolving on the carrier"
+      end
+
+      context "without an actionpack collection" do
+        it "stays silent on the same `expect` / `require` calls"
+      end
+    end
+
     # Issue #2430 — a nil-check guard on a `params[:key]` read stays silent. This is a labelled guard: the
     # guarded forms are silent under the bare union and under the carrier alike, so no removal of the fix
     # line fails it. The unguarded assigned form is pinned by the possible-nil spec below.
