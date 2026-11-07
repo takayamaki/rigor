@@ -474,23 +474,26 @@ module Rigor
       # `params.permit(...)` calls returned `Dynamic` at the first hop (Parameters ships no bundled RBS,
       # so a call on it resolves lenient-to-Dynamic), leaking every downstream site (`.permit`, `.to_h`,
       # `.each`) to unprotected. These methods return another `Parameters`, so gate on a
-      # `Parameters` receiver and re-type the result as the same lenient nominal — the chain stays a
-      # concrete receiver end-to-end and `coverage --protection` counts the sites as protected.
+      # `Parameters` receiver and re-type the result as the same lenient nominal, so the chain keeps a
+      # receiver the plugin can name and `coverage --protection` counts the sites as protected.
       #
-      # `require` may return a scalar for a flat key at runtime (`params.require(:id) → String`), but
-      # typing it as the RBS-less `Parameters` is FP-safe by the same argument as the readers: every
-      # method on a Parameters value stays engine-lenient (no `undefined-method`), and this types the
-      # container only, never a caller's argument (ADR-5). The GitLab strong-params survey (108 leaked
-      # `.permit` sites) is the demand.
+      # The GitLab strong-params survey (108 leaked `.permit` sites) is the demand.
       # Issue #534 — `expect` (Rails 8's require+permit) and `slice` joined 2026-09-01, from the corpus
-      # sweep's pair counts (63 and 38 sites on mastodon). Both share `require`'s safety shape: they
-      # never return nil (`expect` raises like `require`; `slice` always returns a Parameters), so the
-      # non-nil lenient nominal cannot fold a flow rule wrong.
+      # sweep's pair counts (63 and 38 sites on mastodon). Neither returns nil (`expect` raises like
+      # `require`; `slice` always returns a Parameters), so neither can fold a flow rule wrong.
+      #
+      # Issue #2947 — `require` and `expect` return the value itself for a flat key
+      # (`params.require(:id)`, `params.expect(:sort)`). The bare nominal was FP-safe only while Parameters
+      # had no RBS: with an actionpack collection loaded, `.to_sym` on it drew `call.undefined-method`. They
+      # answer `Dynamic[Parameters]`, the carrier `params[...]` chains already use, and the facet keeps
+      # `params.require(:user).permit(:name)` resolving.
       #
       # ## The admission rule for this table
       #
       # A method belongs here **iff its Rails implementation returns an `ActionController::Parameters`
       # on every path** — either a fresh `new_instance_with_inherited_permitted_status(...)` or `self`.
+      # `require` and `expect` are the two exceptions, kept by the carrier in
+      # `SCALAR_CAPABLE_CHAIN_METHODS`; they are never nil, which is what the flow rules below need.
       # That is a stronger bar than "usually returns Parameters", and it is the bar that keeps the
       # entry FP-safe, because the RBS-less nominal buys leniency on the *method surface* only:
       #
