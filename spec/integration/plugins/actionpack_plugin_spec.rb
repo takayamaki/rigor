@@ -55,14 +55,19 @@ MODEL_FIND_SIG = <<~RBS
   end
 RBS
 
-# The shape of the actionpack 7.2 collection's `Parameters` declaration, hand-written as a stand-in: its
-# `[]` is `(untyped) -> untyped`. The #2430 specs run once with it and once without.
+# A hand-written stand-in for `Parameters` in the actionpack 8.1 entry of ruby/gem_rbs_collection, reduced
+# to what the #2430 and #2947 specs need. `[]`, `require` and `expect` return `untyped`, and `permit`,
+# `select` and `reject` return `Parameters`, so a value the plugin answers as the bare nominal reports the
+# scalar's and the Array's methods. The #2430 specs run once with it and once without.
 PARAMETERS_STANDIN_SIG = <<~RBS
   module ActionController
     class Parameters
       def []: (untyped key) -> untyped
       def require: (untyped key) -> untyped
-      def permit: (*untyped filters) -> untyped
+      def expect: (*untyped filters) -> untyped
+      def permit: (*untyped filters) -> Parameters
+      def select: () { (untyped key, untyped value) -> boolish } -> Parameters
+      def reject: () { (untyped key, untyped value) -> boolish } -> Parameters
     end
   end
 RBS
@@ -225,9 +230,9 @@ RSpec.describe "plugins/rigor-actionpack" do
     end
 
     it "keeps `require` / `permit` chained off `params` typed as Parameters (Phase 5b)" do
-      # Pre-fix `params.require(:user)` returned Dynamic (Parameters ships no RBS), leaking the chained
-      # `.permit` and every downstream site to unprotected. The chain now stays a concrete Parameters
-      # receiver end-to-end.
+      # Pre-fix `params.require(:user)` returned `Dynamic[top]` (Parameters ships no RBS), leaking the chained
+      # `.permit` and every downstream site to unprotected. The chain now keeps Parameters end-to-end; since
+      # #2947 `require` answers the `Dynamic` carrier over it, because a flat key returns the value itself.
       source = <<~RUBY
         class C
           def create
@@ -245,8 +250,9 @@ RSpec.describe "plugins/rigor-actionpack" do
     end
 
     it "keeps `expect` / `slice` chained off `params` typed as Parameters (#534)" do
-      # Both share `require`'s safety shape: they never return nil, so the non-nil lenient nominal
-      # cannot fold a flow rule wrong. `[]` is deliberately absent — see the control below.
+      # `slice` always returns a Parameters, so its non-nil nominal cannot fold a flow rule wrong. `expect` can
+      # return `false`, so since #2947 it answers the `Dynamic` carrier, which folds nothing. `[]` is
+      # deliberately absent — see the control below.
       source = <<~RUBY
         class C
           def create
@@ -472,8 +478,122 @@ RSpec.describe "plugins/rigor-actionpack" do
         dumps = result.diagnostics.select { |d| d.rule == "dump.type" }.map(&:message)
         expect(dumps.size).to eq(3)
         expect(dumps[0]).to include("Dynamic[ActionController::Parameters]")
-        expect(dumps[1]).to include("Dynamic[ActionController::Parameters]")
+        expect(dumps[1]).to include("Dynamic[ActionController::Parameters?]")
         expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+      end
+    end
+
+    describe "`expect` / `require` on `params`, which can answer a scalar (#2947)" do
+      def controller_calling(*expressions)
+        "class C\n  def create\n#{expressions.map { |expr| "    #{expr}\n" }.join}  end\nend\n"
+      end
+
+      context "with an actionpack collection loaded" do
+        let(:collection) { { "parameters.rbs" => PARAMETERS_STANDIN_SIG } }
+
+        it "stays silent on `params.expect(:sort).to_sym`" do
+          with_demo(controller_calling("params.expect(:sort).to_sym"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
+        it "stays silent on `params.require(:id).to_sym`" do
+          with_demo(controller_calling("params.require(:id).to_sym"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
+        it "stays silent on `params.expect(:time).match?(/x/)`" do
+          with_demo(controller_calling("params.expect(:time).match?(/x/)"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
+        # `RbsDispatch` projects a `Dynamic[Parameters]` receiver through its facet, so a self-returning
+        # method answers the bare nominal and the scalar's method reports. These pin the `Dynamic` over the
+        # nilable facet, which is not projected.
+        %w[expect require].each do |reader|
+          [
+            ".dup.to_sym",
+            ".clone.strip",
+            ".itself.to_sym",
+            ".freeze.to_sym",
+            ".then { |v| v.to_sym }",
+            ".tap { |v| v.to_sym }"
+          ].each do |shape|
+            it "stays silent on `params.#{reader}(:x)#{shape}`" do
+              with_demo(controller_calling("params.#{reader}(:x)#{shape}"), signatures: collection) do |result|
+                expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+              end
+            end
+          end
+        end
+
+        ["params[:u].require(:x)", "params[:u].expect(:x)", "params.require(:u).require(:x)"].each do |read|
+          it "stays silent on `#{read}.dup.to_sym`, through the carrier rule" do
+            with_demo(controller_calling("#{read}.dup.to_sym"), signatures: collection) do |result|
+              expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+            end
+          end
+        end
+
+        it "stays silent on an Array result through a method the collection declares as Parameters" do
+          source = controller_calling("params.require(:ids).reject(&:blank?).map(&:to_i)")
+          with_demo(source, signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
+        # `require` and `expect` return `false` for a false value, so nothing may fold their truthiness.
+        ["params.require(:flag)", "params.require(:flag).itself", "params.expect(:flag).itself"].each do |flag|
+          it "folds no condition on `#{flag}`" do
+            source = controller_calling("mode = #{flag} ? :on : :off", "return 1 if mode == :off")
+            with_demo(source, signatures: collection) do |result|
+              expect(result.diagnostics.map(&:rule).grep(/\Aflow\./)).to be_empty
+            end
+          end
+        end
+
+        it "still reports `call.undefined-method` on `params.permit(:name).no_such_method`" do
+          with_demo(controller_calling("params.permit(:name).no_such_method"), signatures: collection) do |result|
+            undefined = result.diagnostics.select { |d| d.rule == "call.undefined-method" }
+            expect(undefined.map(&:message)).to contain_exactly(include("no_such_method"))
+          end
+        end
+
+        it "keeps the `require(...).permit` and `expect(...)` chains resolving on the carrier" do
+          source = controller_calling(
+            "Rigor.dump_type(params.require(:user))",
+            "Rigor.dump_type(params.require(:user).permit(:name))",
+            "Rigor.dump_type(params.expect(user: [:name]))",
+            "Rigor.dump_type(params.expect(user: [:name]).slice(:name))"
+          )
+          with_demo(source, signatures: collection) do |result|
+            dumps, others = result.diagnostics.partition { |d| d.rule == "dump.type" }
+            expect(dumps.map(&:message)).to contain_exactly(
+              include("Dynamic[ActionController::Parameters?]"),
+              include("Dynamic[ActionController::Parameters]"),
+              include("Dynamic[ActionController::Parameters?]"),
+              include("Dynamic[ActionController::Parameters]")
+            )
+            expect(others).to be_empty
+          end
+        end
+      end
+
+      # A labelled guard: these are silent with or without the fix, because nothing reports on a Parameters
+      # that has no RBS. It keeps the fix from depending on a collection being installed.
+      context "without an actionpack collection" do
+        it "stays silent on the same `expect` / `require` calls (#2947 guard)" do
+          source = controller_calling(
+            "params.expect(:sort).to_sym",
+            "params.require(:id).to_sym",
+            "params.expect(:time).match?(/x/)"
+          )
+          with_demo(source) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
       end
     end
 

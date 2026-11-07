@@ -86,7 +86,11 @@ module Rigor
         # `claimed_globs` equality the carry checks. A manifest version is in no cache key of its own.
         # Bumped 2026-10-27 (#2430) — `params[...]` answers the gradual `Dynamic[Parameters | nil]` rather than
         # the bare union, so a cached 1.5.0 run carries the non-gradual answer at every `params[:k]` argument.
-        version: "1.6.0",
+        # Bumped 2026-11-07 (#2947) — `params.require` / `params.expect` answer the gradual
+        # `Dynamic[Parameters | nil]` rather than the bare nominal. The bump is belt-and-braces: what actually
+        # invalidates a run is the run-result key, through `Rigor::VERSION` and, in a checkout, the
+        # `engine-source` digest, whose tree includes `plugins/`.
+        version: "1.7.0",
         description: "Validates Action Pack route-helper calls and filter chains inside controllers, and types the request-context readers (`params` / `session` / `request` / `flash`) and their chains.",
         config_schema: {
           "controller_search_paths" => { kind: :array, default: ["app/controllers"] },
@@ -474,23 +478,30 @@ module Rigor
       # `params.permit(...)` calls returned `Dynamic` at the first hop (Parameters ships no bundled RBS,
       # so a call on it resolves lenient-to-Dynamic), leaking every downstream site (`.permit`, `.to_h`,
       # `.each`) to unprotected. These methods return another `Parameters`, so gate on a
-      # `Parameters` receiver and re-type the result as the same lenient nominal — the chain stays a
-      # concrete receiver end-to-end and `coverage --protection` counts the sites as protected.
+      # `Parameters` receiver and re-type the result as the same lenient nominal, so the chain keeps a
+      # receiver the plugin can name and `coverage --protection` counts the sites as protected. This no longer
+      # holds through `require` / `expect` (#2947): their answer is a `Dynamic`, so the sites after them are
+      # not counted.
       #
-      # `require` may return a scalar for a flat key at runtime (`params.require(:id) → String`), but
-      # typing it as the RBS-less `Parameters` is FP-safe by the same argument as the readers: every
-      # method on a Parameters value stays engine-lenient (no `undefined-method`), and this types the
-      # container only, never a caller's argument (ADR-5). The GitLab strong-params survey (108 leaked
-      # `.permit` sites) is the demand.
+      # The GitLab strong-params survey (108 leaked `.permit` sites) is the demand.
       # Issue #534 — `expect` (Rails 8's require+permit) and `slice` joined 2026-09-01, from the corpus
-      # sweep's pair counts (63 and 38 sites on mastodon). Both share `require`'s safety shape: they
-      # never return nil (`expect` raises like `require`; `slice` always returns a Parameters), so the
-      # non-nil lenient nominal cannot fold a flow rule wrong.
+      # sweep's pair counts (63 and 38 sites on mastodon). `slice` always returns a Parameters, so the non-nil
+      # nominal cannot fold a flow rule wrong.
+      #
+      # Issue #2947 — `require` and `expect` return the value itself: a scalar, an Array, or `false`
+      # (`value.present? || value == false`), so a non-nil nominal could fold a live condition. It also reports
+      # the value's methods once an actionpack collection is loaded. `Dynamic[Parameters]` does not fix either:
+      # `RbsDispatch#facet_descriptor` projects it, so `.dup` answers the bare nominal and `.dup.to_sym` reports.
+      # They answer `params_read_type` because a `Dynamic` over a union is not projected, not because they
+      # return nil (they raise). The carrier-gated rules keep `params.require(:user).permit(:name)` resolving.
+      # The cost is in `approval-queue.d/fix-actionpack-scalar-params.md`.
       #
       # ## The admission rule for this table
       #
       # A method belongs here **iff its Rails implementation returns an `ActionController::Parameters`
       # on every path** — either a fresh `new_instance_with_inherited_permitted_status(...)` or `self`.
+      # `require` and `expect` are the two exceptions (`SCALAR_CAPABLE_CHAIN_METHODS`): they stay so that the
+      # chain through them resolves, and they answer `params_read_type` rather than the nominal.
       # That is a stronger bar than "usually returns Parameters", and it is the bar that keeps the
       # entry FP-safe, because the RBS-less nominal buys leniency on the *method surface* only:
       #
@@ -571,14 +582,19 @@ module Rigor
         compact compact_blank deep_dup
       ].freeze
 
+      # Issue #2947 — these can return the value itself, so they answer what a `params[...]` read answers.
+      SCALAR_CAPABLE_CHAIN_METHODS = %i[require expect].freeze
+
       dynamic_return receivers: [REQUEST_CONTEXT_READER_TYPES[:params]], methods: STRONG_PARAMS_CHAIN_METHODS do |call_node, _scope|
         next nil unless call_node.is_a?(Prism::CallNode)
+        next params_read_type if SCALAR_CAPABLE_CHAIN_METHODS.include?(call_node.name)
 
         Rigor::Type::Combinator.nominal_of(REQUEST_CONTEXT_READER_TYPES[:params])
       end
 
       # Issue #2430 — the chain on a `params[...]` carrier (`params[:user].permit(:name)`). The result stays
-      # a `Dynamic` of the same nominal, so it crosses a declared boundary as the carrier does.
+      # a `Dynamic` of the same nominal, so it crosses a declared boundary as the carrier does. `require` and
+      # `expect` answer `params_read_type` here too (#2947).
       dynamic_return methods: STRONG_PARAMS_CHAIN_METHODS do |call_node, scope|
         next nil unless call_node.is_a?(Prism::CallNode)
 
@@ -586,6 +602,7 @@ module Rigor
         next nil unless receiver
         next nil unless controller_scope?(scope)
         next nil unless params_carrier_facet?(scope.type_of(receiver))
+        next params_read_type if SCALAR_CAPABLE_CHAIN_METHODS.include?(call_node.name)
 
         Rigor::Type::Combinator.dynamic(Rigor::Type::Combinator.nominal_of(REQUEST_CONTEXT_READER_TYPES[:params]))
       end

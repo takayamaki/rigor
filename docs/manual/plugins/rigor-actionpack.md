@@ -399,24 +399,36 @@ diff — not a policy scoped to `app/views/**/*`. See
   those producers widens what this plugin can check.
 - **`params[:key]` is a gradual carrier.** Inside a controller,
   `params` types as `ActionController::Parameters`, and so does the
-  result of every builder method that always returns one — `require`,
-  `permit`, `permit!`, `expect`, `slice`, `slice!`, `except`,
-  `without`, `extract!`, `merge`, `merge!`, `reverse_merge`,
-  `reverse_merge!`, `with_defaults`, `with_defaults!`, `compact`,
-  `compact_blank`, `deep_dup` — so a chain built from them keeps a
-  concrete receiver throughout. A subscript read answers
-  `Dynamic[ActionController::Parameters | nil]` (#2430): the static
-  facet is the nilable `Parameters`, so `params[:user][:name]` and
-  `params[:user].permit(:name)` keep dispatching on that facet, and
-  the `Dynamic` wrapper lets the value cross a declared boundary such
+  result of every builder method that always returns one — `permit`,
+  `permit!`, `slice`, `slice!`, `except`, `without`, `extract!`,
+  `merge`, `merge!`, `reverse_merge`, `reverse_merge!`,
+  `with_defaults`, `with_defaults!`, `compact`, `compact_blank`,
+  `deep_dup` — so a chain built from them keeps a concrete receiver
+  throughout. `require` and `expect` can return the value itself (a
+  scalar, an Array, or `false`), so they answer the same type as a
+  subscript read (#2947), and a method called on the result draws no
+  diagnostic even with RBS for `Parameters` loaded. A subscript read
+  answers `Dynamic[ActionController::Parameters | nil]` (#2430): the
+  plugin's chain rules gate on the nilable `Parameters` facet, so
+  `params[:user][:name]` and `params[:user].permit(:name)` keep
+  resolving, and the `Dynamic` wrapper lets the value cross a declared boundary such
   as a `String` parameter, as a scalar param does at runtime. The
   facet is nilable rather than the non-nil nominal on purpose:
   `params[:missing]` is `nil` at runtime, and a non-nil type would
   let the flow rules fold live conditions (`if params[:q]`,
   `url.nil?`) to a constant and report working code. Methods on the
   carrier outside the chain (`params[:q].to_s`) answer `Dynamic[top]`,
-  because the engine dispatches a `Dynamic` receiver without projecting
-  its facet: a loss of precision, not a false positive. Methods whose
+  because the engine does not project a `Dynamic` over a union: a loss
+  of precision, not a false positive. A chain method other than
+  `require` and `expect` called on the carrier answers
+  `Dynamic[ActionController::Parameters]`, whose facet
+  the engine does project when RBS for `Parameters` is loaded:
+  `params.require(:user).permit(:name).to_h` resolves through that RBS,
+  and answers `Dynamic[top]` without it. A method the RBS does not
+  declare draws no diagnostic there, so
+  `params.require(:user).permit(:name).no_such_method` goes unreported,
+  and `coverage --protection` does not count the sites after `require`
+  or `expect` as protected. Methods whose
   result depends on the call — `dig`, `fetch`, `compact!`, and the
   block-less `select` / `reject` / `transform_keys` /
   `transform_values` — are untyped for the same reason.
