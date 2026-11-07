@@ -86,7 +86,10 @@ module Rigor
         # `claimed_globs` equality the carry checks. A manifest version is in no cache key of its own.
         # Bumped 2026-10-27 (#2430) — `params[...]` answers the gradual `Dynamic[Parameters | nil]` rather than
         # the bare union, so a cached 1.5.0 run carries the non-gradual answer at every `params[:k]` argument.
-        version: "1.6.0",
+        # Bumped 2026-11-07 (#2947) — `params.require` / `params.expect` answer the gradual
+        # `Dynamic[Parameters]` rather than the nominal, so a cached 1.6.0 run carries the nominal at every
+        # such call and its false `call.undefined-method` on a scalar's method.
+        version: "1.7.0",
         description: "Validates Action Pack route-helper calls and filter chains inside controllers, and types the request-context readers (`params` / `session` / `request` / `flash`) and their chains.",
         config_schema: {
           "controller_search_paths" => { kind: :array, default: ["app/controllers"] },
