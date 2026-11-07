@@ -577,14 +577,14 @@ module Rigor
         compact compact_blank deep_dup
       ].freeze
 
-      # Issue #2947 — these can return the scalar value itself, so they answer the gradual carrier.
+      # Issue #2947 — these can return the value itself, so they answer what a `params[...]` read answers.
       SCALAR_CAPABLE_CHAIN_METHODS = %i[require expect].freeze
 
       dynamic_return receivers: [REQUEST_CONTEXT_READER_TYPES[:params]], methods: STRONG_PARAMS_CHAIN_METHODS do |call_node, _scope|
         next nil unless call_node.is_a?(Prism::CallNode)
+        next params_read_type if SCALAR_CAPABLE_CHAIN_METHODS.include?(call_node.name)
 
-        parameters = Rigor::Type::Combinator.nominal_of(REQUEST_CONTEXT_READER_TYPES[:params])
-        SCALAR_CAPABLE_CHAIN_METHODS.include?(call_node.name) ? Rigor::Type::Combinator.dynamic(parameters) : parameters
+        Rigor::Type::Combinator.nominal_of(REQUEST_CONTEXT_READER_TYPES[:params])
       end
 
       # Issue #2430 — the chain on a `params[...]` carrier (`params[:user].permit(:name)`). The result stays
