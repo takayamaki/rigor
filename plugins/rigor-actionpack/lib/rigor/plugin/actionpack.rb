@@ -572,7 +572,7 @@ module Rigor
       ].freeze
 
       # Issue #2947 — these can return the scalar value itself, so they answer the gradual carrier.
-      SCALAR_CAPABLE_CHAIN_METHODS = %i[expect].freeze
+      SCALAR_CAPABLE_CHAIN_METHODS = %i[require expect].freeze
 
       dynamic_return receivers: [REQUEST_CONTEXT_READER_TYPES[:params]], methods: STRONG_PARAMS_CHAIN_METHODS do |call_node, _scope|
         next nil unless call_node.is_a?(Prism::CallNode)

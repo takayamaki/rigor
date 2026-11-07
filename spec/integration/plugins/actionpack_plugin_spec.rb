@@ -493,7 +493,11 @@ RSpec.describe "plugins/rigor-actionpack" do
           end
         end
 
-        it "stays silent on `params.require(:id).to_sym`"
+        it "stays silent on `params.require(:id).to_sym`" do
+          with_demo(controller_calling("params.require(:id).to_sym"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
 
         it "stays silent on `params.expect(:time).match?(/x/)`" do
           with_demo(controller_calling("params.expect(:time).match?(/x/)"), signatures: collection) do |result|
@@ -501,12 +505,40 @@ RSpec.describe "plugins/rigor-actionpack" do
           end
         end
 
-        it "still reports `call.undefined-method` on `params.permit(:name).no_such_method`"
-        it "keeps the `require(...).permit` and `expect(...)` chains resolving on the carrier"
+        it "still reports `call.undefined-method` on `params.permit(:name).no_such_method`" do
+          with_demo(controller_calling("params.permit(:name).no_such_method"), signatures: collection) do |result|
+            undefined = result.diagnostics.select { |d| d.rule == "call.undefined-method" }
+            expect(undefined.map(&:message)).to contain_exactly(include("no_such_method"))
+          end
+        end
+
+        it "keeps the `require(...).permit` and `expect(...)` chains resolving on the carrier" do
+          source = controller_calling(
+            "Rigor.dump_type(params.require(:user))",
+            "Rigor.dump_type(params.require(:user).permit(:name))",
+            "Rigor.dump_type(params.expect(user: [:name]))",
+            "Rigor.dump_type(params.expect(user: [:name]).slice(:name))"
+          )
+          with_demo(source, signatures: collection) do |result|
+            dumps, others = result.diagnostics.partition { |d| d.rule == "dump.type" }
+            expect(dumps.map(&:message)).to all(include("Dynamic[ActionController::Parameters]"))
+            expect(dumps.size).to eq(4)
+            expect(others).to be_empty
+          end
+        end
       end
 
       context "without an actionpack collection" do
-        it "stays silent on the same `expect` / `require` calls"
+        it "stays silent on the same `expect` / `require` calls" do
+          source = controller_calling(
+            "params.expect(:sort).to_sym",
+            "params.require(:id).to_sym",
+            "params.expect(:time).match?(/x/)"
+          )
+          with_demo(source) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
       end
     end
 
