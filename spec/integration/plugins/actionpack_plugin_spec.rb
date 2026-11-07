@@ -55,13 +55,15 @@ MODEL_FIND_SIG = <<~RBS
   end
 RBS
 
-# The shape of the actionpack 7.2 collection's `Parameters` declaration, hand-written as a stand-in: its
-# `[]` is `(untyped) -> untyped`. The #2430 specs run once with it and once without.
+# The shape of the actionpack collection's `Parameters` declaration, hand-written as a stand-in: its `[]`
+# is `(untyped) -> untyped`. The #2430 specs run once with it and once without. `expect` is what the 8.1
+# entry adds for #2947.
 PARAMETERS_STANDIN_SIG = <<~RBS
   module ActionController
     class Parameters
       def []: (untyped key) -> untyped
       def require: (untyped key) -> untyped
+      def expect: (*untyped filters) -> untyped
       def permit: (*untyped filters) -> untyped
     end
   end
@@ -478,10 +480,27 @@ RSpec.describe "plugins/rigor-actionpack" do
     end
 
     describe "`expect` / `require` on `params`, which can answer a scalar (#2947)" do
+      def controller_calling(*expressions)
+        "class C\n  def create\n#{expressions.map { |expr| "    #{expr}\n" }.join}  end\nend\n"
+      end
+
       context "with an actionpack collection loaded" do
-        it "stays silent on `params.expect(:sort).to_sym`"
+        let(:collection) { { "parameters.rbs" => PARAMETERS_STANDIN_SIG } }
+
+        it "stays silent on `params.expect(:sort).to_sym`" do
+          with_demo(controller_calling("params.expect(:sort).to_sym"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
         it "stays silent on `params.require(:id).to_sym`"
-        it "stays silent on `params.expect(:time).match?(/x/)`"
+
+        it "stays silent on `params.expect(:time).match?(/x/)`" do
+          with_demo(controller_calling("params.expect(:time).match?(/x/)"), signatures: collection) do |result|
+            expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
+          end
+        end
+
         it "still reports `call.undefined-method` on `params.permit(:name).no_such_method`"
         it "keeps the `require(...).permit` and `expect(...)` chains resolving on the carrier"
       end
