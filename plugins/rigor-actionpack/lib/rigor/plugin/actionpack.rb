@@ -596,6 +596,7 @@ module Rigor
         next nil unless receiver
         next nil unless controller_scope?(scope)
         next nil unless params_carrier_facet?(scope.type_of(receiver))
+        next params_read_type if SCALAR_CAPABLE_CHAIN_METHODS.include?(call_node.name)
 
         Rigor::Type::Combinator.dynamic(Rigor::Type::Combinator.nominal_of(REQUEST_CONTEXT_READER_TYPES[:params]))
       end

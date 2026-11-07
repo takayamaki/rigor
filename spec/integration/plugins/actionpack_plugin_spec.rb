@@ -477,7 +477,7 @@ RSpec.describe "plugins/rigor-actionpack" do
         dumps = result.diagnostics.select { |d| d.rule == "dump.type" }.map(&:message)
         expect(dumps.size).to eq(3)
         expect(dumps[0]).to include("Dynamic[ActionController::Parameters]")
-        expect(dumps[1]).to include("Dynamic[ActionController::Parameters]")
+        expect(dumps[1]).to include("Dynamic[ActionController::Parameters?]")
         expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
       end
     end
@@ -524,6 +524,14 @@ RSpec.describe "plugins/rigor-actionpack" do
               with_demo(controller_calling("params.#{reader}(:x)#{shape}"), signatures: collection) do |result|
                 expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
               end
+            end
+          end
+        end
+
+        ["params[:u].require(:x)", "params[:u].expect(:x)", "params.require(:u).require(:x)"].each do |read|
+          it "stays silent on `#{read}.dup.to_sym`, through the carrier rule" do
+            with_demo(controller_calling("#{read}.dup.to_sym"), signatures: collection) do |result|
+              expect(result.diagnostics.map(&:rule)).not_to include("call.undefined-method")
             end
           end
         end
