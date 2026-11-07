@@ -419,8 +419,9 @@ diff — not a policy scoped to `app/views/**/*`. See
   `url.nil?`) to a constant and report working code. Methods on the
   carrier outside the chain (`params[:q].to_s`) answer `Dynamic[top]`,
   because the engine does not project a `Dynamic` over a union: a loss
-  of precision, not a false positive. A chain method called on the
-  carrier answers `Dynamic[ActionController::Parameters]`, whose facet
+  of precision, not a false positive. A chain method other than
+  `require` and `expect` called on the carrier answers
+  `Dynamic[ActionController::Parameters]`, whose facet
   the engine does project when RBS for `Parameters` is loaded:
   `params.require(:user).permit(:name).to_h` resolves through that RBS,
   and answers `Dynamic[top]` without it. A method the RBS does not

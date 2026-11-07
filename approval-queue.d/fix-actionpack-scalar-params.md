@@ -21,10 +21,13 @@ rigor-actionpack answered `params.require` and `params.expect` as the bare nomin
 
 (c). False positives outrank protection (AGENTS.md), and #2445 made the same trade for `params[...]`, whose entry the maintainer ratified.
 
-Two consequences are accepted and not fixed:
+These consequences are accepted and not fixed:
 
 - `coverage --protection` falls on chains through `require` and `expect`, because the sites after them have a `Dynamic` receiver. On a small controller fixture (seven lines of chains, with and without RBS for `Parameters`) the count went from 16 / 16 protected before #2947 to 8 / 16. A review fixture went from 26 protected to 13. (b) measured the same 8 / 16 on the small fixture.
 - `params.require(:u).permit(:name).no_such_method` no longer reports. `params.permit(:name).no_such_method` still does, because `permit` on the `params` receiver keeps the nominal. `permit` on the carrier keeps the answer #2445 pinned.
+- A kept-nil arm of a `.nil?` test now reports, though the arm is dead because both methods raise instead of returning nil. `x = params.require(:a); y = x.nil? ? nil : "s"; y.upcase` draws `call.possible-nil-receiver`. The `nil` in the facet is not the cause: `.nil?` narrows any `Dynamic` to `nil`, and a declared `-> untyped` value reports the same way.
+- `rigor sig-gen` skips `def c = params.require(:u).permit(:a)` as `sig.skipped.untyped-return`, where it used to write `-> ActionController::Parameters`. It also no longer writes the wrong `-> Parameters` for `def a = params.require(:x)`.
+- Outside a controller scope the carrier rules do not apply, so `ActionController::Parameters.new(a: 1).require(:x).permit(:a)` answers `Dynamic[top]` and a typo after it no longer reports.
 
 The fit with the precedent is close but not exact: #2445 changed one read, where this also moves two entries of the strong-parameters chain.
 
