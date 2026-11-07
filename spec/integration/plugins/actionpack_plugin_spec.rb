@@ -232,7 +232,7 @@ RSpec.describe "plugins/rigor-actionpack" do
     it "keeps `require` / `permit` chained off `params` typed as Parameters (Phase 5b)" do
       # Pre-fix `params.require(:user)` returned `Dynamic[top]` (Parameters ships no RBS), leaking the chained
       # `.permit` and every downstream site to unprotected. The chain now keeps Parameters end-to-end; since
-      # #2947 `require` answers it as the `Dynamic` carrier, because a flat key returns the scalar.
+      # #2947 `require` answers the `Dynamic` carrier over it, because a flat key returns the value itself.
       source = <<~RUBY
         class C
           def create
@@ -250,8 +250,9 @@ RSpec.describe "plugins/rigor-actionpack" do
     end
 
     it "keeps `expect` / `slice` chained off `params` typed as Parameters (#534)" do
-      # Neither returns nil, so neither can fold a flow rule wrong. `expect` answers the `Dynamic` carrier
-      # since #2947; `slice` keeps the nominal. `[]` is deliberately absent — see the control below.
+      # `slice` always returns a Parameters, so its non-nil nominal cannot fold a flow rule wrong. `expect` can
+      # return `false`, so since #2947 it answers the `Dynamic` carrier, which folds nothing. `[]` is
+      # deliberately absent — see the control below.
       source = <<~RUBY
         class C
           def create
