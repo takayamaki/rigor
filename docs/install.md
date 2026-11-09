@@ -105,6 +105,17 @@ gem:rigortype@<version>` again with the newer version; `mise upgrade
 --bump gem:rigortype` goes through the same quarantine as a bare
 `mise use`.
 
+If the project's `Gemfile` has `rbs`, tell the user that this install
+also puts an `rbs` executable on `PATH`, because mise's gem backend
+exposes the executables of a gem's dependencies too. With Bundler's
+default install path, `bundle exec rbs` then runs that copy under
+Rigor's private gem home instead of the project's, and it fails if the
+`Gemfile` has a git-sourced gem. A bundle installed to its own path
+is not affected, because `bundle exec` puts that path's `bin` first.
+Offer `bundle config set --local path vendor/bundle` followed by
+`bundle install`, but do not change the project's Bundler config
+without the user's consent.
+
 A user-wide `~/.config/mise/config.toml` entry for `gem:rigortype`
 keeps applying outside this project. Mention it if it names an older
 version, but do not edit global config without the user's consent.
